@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TransitWake App</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons (Browser version) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; margin: 0; padding: 0; overflow: hidden; background-color: #f8fafc; }
+        #map { width: 100%; height: 100vh; z-index: 0; }
+        
+        /* Custom map marker styles */
+        .custom-marker { display: flex; justify-content: center; align-items: center; border-radius: 50%; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 3px solid white; }
+        .marker-current { background-color: #22c55e; } /* Green */
+        .marker-target { background-color: #ef4444; } /* Red */
+        .marker-alarm { background-color: #3b82f6; } /* Blue */
+
+        /* Search Dropdown Scrollbar hide */
+        #search-results::-webkit-scrollbar { display: none; }
+        #search-results { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="relative h-screen w-full flex flex-col">
+
+    <div class="absolute top-0 w-full z-[1000] p-4 flex flex-col gap-2 pointer-events-none">
+        <!-- Logo -->
+        <div class="bg-white/95 backdrop-blur shadow-md rounded-2xl p-3 flex items-center justify-center pointer-events-auto">
+            <i data-lucide="bell" class="w-5 h-5 text-indigo-600 mr-2"></i>
+            <h1 class="text-lg font-extrabold text-slate-800 tracking-tight">TransitWake</h1>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="relative pointer-events-auto">
+            <div class="bg-white rounded-xl shadow-lg flex items-center px-4 py-3 border border-slate-100">
+                <i data-lucide="search" class="w-5 h-5 text-slate-400"></i>
+                <input type="text" id="searchInput" placeholder="Search town or location..." class="w-full bg-transparent border-none outline-none ml-3 text-slate-700 font-medium placeholder-slate-400">
+                <button id="clearSearch" class="hidden text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <!-- Search Results Dropdown -->
+            <ul id="searchResults" class="absolute w-full mt-2 bg-white rounded-xl shadow-xl max-h-60 overflow-y-auto hidden border border-slate-100">
+                <!-- Results will be populated here by JS -->
+            </ul>
+        </div>
+        
+        <!-- Status Toast -->
+        <div id="statusToast" class="hidden mt-2 text-center pointer-events-auto transition-all">
+            <span class="bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-pulse" id="toastMessage">
+                Message
+            </span>
+        </div>
+    </div>
+
+    <!-- Background Keep-Alive Audio (Silent) -->
+    <audio id="bgAudio" loop>
+        <source src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA" type="audio/wav">
+    </audio>
+
+    <!-- Locate Me Button -->
+    <button id="btnLocate" class="absolute right-6 z-[1000] bg-white p-3 rounded-full shadow-xl text-slate-700 hover:text-indigo-600 transition-colors border border-slate-100 flex items-center justify-center" style="bottom: 340px;">
+        <i data-lucide="crosshair" class="w-6 h-6"></i>
+    </button>
+
+    <div id="map" class="flex-1 w-full bg-slate-200 cursor-crosshair"></div>
+
+    <div class="absolute bottom-0 w-full z-[1000] bg-white rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-8 transition-transform duration-300">
+        <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-4"></div>
+        
+        <!-- Alarm Type Switcher -->
+        <div class="flex bg-slate-100 p-1 rounded-xl mb-4">
+            <button id="btnTypeBoth" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700">Sound + Vibrate</button>
+            <button id="btnTypeSound" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500">Sound Only</button>
+            <button id="btnTypeVib" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500">Vibrate Only</button>
+        </div>
+
+        <!-- Mode Switcher -->
+        <div class="flex bg-slate-100 p-1 rounded-xl mb-6">
+            <button id="btnDistanceMode" class="flex-1 py-2.5 text-sm font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700">
+                Distance Base
+            </button>
+            <button id="btnManualMode" class="flex-1 py-2.5 text-sm font-bold rounded-lg transition-all text-slate-500">
+                Manual Pin
+            </button>
+        </div>
+
+        <!-- Distance Mode Controls -->
+        <div id="distanceControls" class="mb-6 space-y-4 block">
+            <div class="flex justify-between text-sm font-medium text-slate-600">
+                <span>Wake me up</span>
+                <span class="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded" id="distanceLabel">1000m before</span>
+            </div>
+            <input type="range" id="distanceSlider" min="200" max="5000" step="100" value="1000" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+        </div>
+
+        <!-- Manual Mode Controls -->
+        <div id="manualControls" class="mb-6 hidden">
+            <button id="btnSetManualAlarm" class="w-full py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 flex items-center justify-center space-x-2 transition-colors font-medium">
+                <i data-lucide="map-pin" class="w-5 h-5"></i>
+                <span id="manualBtnText">Tap map to set Alarm Spot</span>
+            </button>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex space-x-3">
+            <button id="btnSimulate" class="flex-1 py-4 rounded-xl flex justify-center items-center font-bold text-white bg-slate-800 hover:bg-slate-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                <i data-lucide="play" class="w-5 h-5 mr-2"></i>
+                <span id="simBtnText">Simulate</span>
+            </button>
+            
+            <button id="btnTrack" class="flex-[2] py-4 rounded-xl flex justify-center items-center font-bold text-white bg-indigo-600 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 disabled:shadow-none">
+                <i data-lucide="navigation" class="w-5 h-5 mr-2" id="trackIcon"></i>
+                <span id="trackBtnText">Start Tracking</span>
+            </button>
+        </div>
+    </div>
+
+    <div id="alarmOverlay" class="hidden absolute inset-0 z-[9999] bg-red-600 animate-[pulse_0.5s_ease-in-out_infinite] flex flex-col items-center justify-center p-6 text-white text-center">
+        <i data-lucide="bell-ring" class="w-32 h-32 mb-6 animate-bounce"></i>
+        <h1 class="text-5xl font-black mb-4 uppercase tracking-tighter">Wake Up!</h1>
+        <p class="text-xl font-medium mb-12 opacity-90">You have reached the alarm zone.</p>
+        <button id="btnStopAlarm" class="bg-white text-red-600 w-full max-w-sm py-5 rounded-full text-2xl font-bold shadow-2xl active:scale-95 transition-transform cursor-pointer">
+            STOP ALARM
+        </button>
+    </div>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Constants & State
+        const START_LOC = { lat: 6.9271, lng: 79.8612 }; // Default Colombo Fort
+        let state = {
+            currentLoc: { ...START_LOC },
+            targetLoc: null,
+            alarmLoc: null,
+            mode: 'distance', // 'distance' or 'manual'
+            selectionMode: null, // 'target' or 'alarm'
+            alarmDistance: 1000,
+            alarmType: 'both', // 'both', 'sound', 'vibrate'
+            routeCoords: [], // Will hold real map route coordinates
+            isSimulating: false,
+            isTracking: false,
+            isAlarmRinging: false,
+            hasAlarmTriggered: false, // Prevents alarm from ringing continuously while inside the zone
+            watchId: null
+        };
+
+        let map, currentMarker, targetMarker, alarmMarker, geofenceCircle, routeLine;
+        let simInterval;
+        
+        // Audio Context for Alarm
+        let audioCtx;
+        let alarmInterval;
+
+        // Wake Lock & Notification Variables
+        let wakeLock = null;
+        let hasNotificationPermission = false;
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Screen Wake Lock released');
+                    });
+                    console.log('Screen Wake Lock acquired - Screen will not sleep');
+                }
+            } catch (err) {
+                console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock !== null) {
+                wakeLock.release()
+                    .then(() => { wakeLock = null; });
+            }
+        }
+
+        // Re-acquire wake lock if user switches back to the tab
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        function initMap() {
+            map = L.map('map', { zoomControl: false }).setView([state.currentLoc.lat, state.currentLoc.lng], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(map);
+
+            // Custom Icon Creators
+            const createIcon = (className) => L.divIcon({
+                className: `custom-marker ${className}`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+
+            currentMarker = L.marker([state.currentLoc.lat, state.currentLoc.lng], { icon: createIcon('marker-current') }).addTo(map);
+
+            // Map Click Event
+            map.on('click', function(e) {
+                if (state.selectionMode === 'alarm' && state.mode === 'manual') {
+                    setAlarmLocation(e.latlng.lat, e.latlng.lng);
+                    state.selectionMode = null;
+                    updateUI();
+                } else if (!state.targetLoc || state.selectionMode === 'target') {
+                    setTargetLocation(e.latlng.lat, e.latlng.lng);
+                }
+            });
+        }
+
+        function getDistance(pos1, pos2) {
+            const R = 6371e3; // meters
+            const lat1 = pos1.lat * Math.PI / 180;
+            const lat2 = pos2.lat * Math.PI / 180;
+            const deltaLat = (pos2.lat - pos1.lat) * Math.PI / 180;
+            const deltaLng = (pos2.lng - pos1.lng) * Math.PI / 180;
+
+            const a = Math.sin(deltaLat/2) * Math.sin(deltaLat/2) +
+                      Math.cos(lat1) * Math.cos(lat2) *
+                      Math.sin(deltaLng/2) * Math.sin(deltaLng/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        function interpolatePoint(start, end, fraction) {
+            return {
+                lat: start.lat + (end.lat - start.lat) * fraction,
+                lng: start.lng + (end.lng - start.lng) * fraction
+            };
+        }
+
+        // Feature: Get current user location via GPS
+        function locateUser() {
+            if (navigator.geolocation) {
+                const toast = document.getElementById('statusToast');
+                const msg = document.getElementById('toastMessage');
+                msg.innerHTML = '<i data-lucide="loader" class="w-4 h-4 mr-2 animate-spin"></i> Finding your location...';
+                toast.classList.remove('hidden');
+                lucide.createIcons();
+                
+                navigator.geolocation.getCurrentPosition((position) => {
+                    state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
+                    if(currentMarker) currentMarker.setLatLng([state.currentLoc.lat, state.currentLoc.lng]);
+                    map.setView([state.currentLoc.lat, state.currentLoc.lng], 14);
+                    toast.classList.add('hidden');
+                    if(state.targetLoc) fetchRoute(); // Get new route from current location
+                }, (error) => {
+                    console.error("Location error", error);
+                    msg.innerHTML = 'Location access denied or failed.';
+                    setTimeout(() => toast.classList.add('hidden'), 3000);
+                }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+            }
+        }
+
+        // Feature: Fetch actual road route using OSRM Navigation API
+        async function fetchRoute() {
+            if(!state.targetLoc) return;
+            // Public OSRM API (No keys required)
+            const url = `https://router.project-osrm.org/route/v1/driving/${state.currentLoc.lng},${state.currentLoc.lat};${state.targetLoc.lng},${state.targetLoc.lat}?overview=full&geometries=geojson`;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if(data.routes && data.routes.length > 0) {
+                    state.routeCoords = data.routes[0].geometry.coordinates; // Array of [lng, lat]
+                    updateMapLayers();
+                    if (state.mode === 'distance') calculateDistanceAlarm();
+                }
+            } catch(error) {
+                console.error("Failed to fetch road route", error);
+            }
+        }
+
+        function setTargetLocation(lat, lng) {
+            state.targetLoc = { lat, lng };
+            document.getElementById('searchInput').value = ""; // clear search if clicked on map
+            
+            // Fetch real road route instead of simple straight line
+            fetchRoute();
+            
+            updateMapLayers();
+            fitBounds();
+            updateUI();
+        }
+
+        function setAlarmLocation(lat, lng) {
+            state.alarmLoc = { lat, lng };
+            updateMapLayers();
+            updateUI();
+        }
+
+        function calculateDistanceAlarm() {
+            if (!state.targetLoc) return;
+            
+            if (state.routeCoords && state.routeCoords.length > 0) {
+                // Calculate distance accurately by walking backwards along the real road path
+                let accumulatedDistance = 0;
+                for (let i = state.routeCoords.length - 1; i > 0; i--) {
+                    const p1 = { lat: state.routeCoords[i][1], lng: state.routeCoords[i][0] };
+                    const p2 = { lat: state.routeCoords[i-1][1], lng: state.routeCoords[i-1][0] };
+                    accumulatedDistance += getDistance(p1, p2);
+                    
+                    if (accumulatedDistance >= state.alarmDistance) {
+                        setAlarmLocation(p2.lat, p2.lng);
+                        return;
+                    }
+                }
+                // If route is shorter than the requested alarm distance
+                setAlarmLocation(state.currentLoc.lat, state.currentLoc.lng);
+            } else {
+                // Fallback math (straight line)
+                const totalDistance = getDistance(state.currentLoc, state.targetLoc);
+                if (totalDistance <= state.alarmDistance) {
+                    setAlarmLocation(state.currentLoc.lat, state.currentLoc.lng);
+                } else {
+                    const fraction = (totalDistance - state.alarmDistance) / totalDistance;
+                    const spot = interpolatePoint(state.currentLoc, state.targetLoc, fraction);
+                    setAlarmLocation(spot.lat, spot.lng);
+                }
+            }
+        }
+
+        function updateMapLayers() {
+            const createIcon = (className) => L.divIcon({ className: `custom-marker ${className}`, iconSize: [24, 24], iconAnchor: [12, 12] });
+
+            // Update Current
+            currentMarker.setLatLng([state.currentLoc.lat, state.currentLoc.lng]);
+
+            // Update Target
+            if (state.targetLoc) {
+                if (!targetMarker) targetMarker = L.marker([state.targetLoc.lat, state.targetLoc.lng], { icon: createIcon('marker-target') }).addTo(map);
+                else targetMarker.setLatLng([state.targetLoc.lat, state.targetLoc.lng]);
+            }
+
+            // Update Alarm & Geofence
+            if (state.alarmLoc) {
+                if (!alarmMarker) alarmMarker = L.marker([state.alarmLoc.lat, state.alarmLoc.lng], { icon: createIcon('marker-alarm') }).addTo(map);
+                else alarmMarker.setLatLng([state.alarmLoc.lat, state.alarmLoc.lng]);
+
+                if (!geofenceCircle) {
+                    geofenceCircle = L.circle([state.alarmLoc.lat, state.alarmLoc.lng], {
+                        color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.2, radius: 200, dashArray: '5, 5'
+                    }).addTo(map);
+                } else {
+                    geofenceCircle.setLatLng([state.alarmLoc.lat, state.alarmLoc.lng]);
+                }
+            }
+
+            // Update Route Line (Draw actual road path)
+            if (state.targetLoc) {
+                let latlngs = [];
+                if (state.routeCoords && state.routeCoords.length > 0) {
+                    // Map real road coordinates
+                    latlngs = state.routeCoords.map(coord => [coord[1], coord[0]]);
+                } else {
+                    latlngs = [[state.currentLoc.lat, state.currentLoc.lng], [state.targetLoc.lat, state.targetLoc.lng]];
+                }
+                
+                if (!routeLine) routeLine = L.polyline(latlngs, {color: '#6366f1', weight: 5, opacity: 0.8}).addTo(map);
+                else routeLine.setLatLngs(latlngs);
+            }
+        }
+
+        function fitBounds() {
+            if (state.targetLoc) {
+                const bounds = L.latLngBounds([state.currentLoc, state.targetLoc]);
+                map.fitBounds(bounds, { padding: [50, 150] }); // padding bottom for UI
+            }
+        }
+
+        const searchInput = document.getElementById('searchInput');
+        const searchResults = document.getElementById('searchResults');
+        const clearSearch = document.getElementById('clearSearch');
+        let searchTimeout;
+
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value;
+            
+            if (query.length > 0) {
+                clearSearch.classList.remove('hidden');
+            } else {
+                clearSearch.classList.add('hidden');
+                searchResults.classList.add('hidden');
+            }
+
+            if (query.length < 3) return;
+
+            searchTimeout = setTimeout(async () => {
+                try {
+                    // Using Nominatim OSM API restricted to Sri Lanka (Added email to avoid access blocked)
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=lk&limit=5&email=test@transitwake.com`, {
+                        headers: {
+                            'Accept': 'application/json',
+                            'Accept-Language': 'en-US,en'
+                        }
+                    });
+                    
+                    if (!res.ok) {
+                        throw new Error("Access Blocked by Map API");
+                    }
+
+                    const data = await res.json();
+                    
+                    searchResults.innerHTML = '';
+                    if (data.length > 0) {
+                        data.forEach(item => {
+                            const li = document.createElement('li');
+                            li.className = 'px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 text-sm font-medium text-slate-700 flex items-center';
+                            li.innerHTML = `<i data-lucide="map-pin" class="w-4 h-4 mr-2 text-slate-400"></i> ${item.display_name.split(',')[0]} <span class="text-xs text-slate-400 ml-2 truncate">${item.display_name}</span>`;
+                            li.onclick = () => {
+                                setTargetLocation(parseFloat(item.lat), parseFloat(item.lon));
+                                searchInput.value = item.display_name.split(',')[0];
+                                searchResults.classList.add('hidden');
+                                lucide.createIcons(); // refresh icons inside dynamic html
+                            };
+                            searchResults.appendChild(li);
+                        });
+                        searchResults.classList.remove('hidden');
+                        lucide.createIcons();
+                    } else {
+                        searchResults.classList.add('hidden');
+                    }
+                } catch (error) {
+                    console.error("Search failed", error);
+                }
+            }, 500); // 500ms debounce
+        });
+
+        clearSearch.addEventListener('click', () => {
+            searchInput.value = '';
+            searchResults.classList.add('hidden');
+            clearSearch.classList.add('hidden');
+        });
+
+        // Hide search on click outside
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                searchResults.classList.add('hidden');
+            }
+        });
+
+        function checkGeofence() {
+            if (!state.alarmLoc) return;
+            const dist = getDistance(state.currentLoc, state.alarmLoc);
+            if (dist <= 200 && !state.isAlarmRinging && !state.hasAlarmTriggered) {
+                triggerAlarm();
+            }
+        }
+
+        function toggleRealTracking() {
+            const bgAudio = document.getElementById('bgAudio');
+            
+            if (state.isTracking) {
+                // Stop Live Tracking
+                state.isTracking = false;
+                if (state.watchId !== null) {
+                    navigator.geolocation.clearWatch(state.watchId);
+                    state.watchId = null;
+                }
+                bgAudio.pause(); // Stop background audio
+                releaseWakeLock(); // Release screen lock
+                const toast = document.getElementById('statusToast');
+                toast.classList.add('hidden');
+            } else {
+                // Start Live Tracking
+                if (!state.targetLoc || !state.alarmLoc) return;
+                state.isTracking = true;
+                state.hasAlarmTriggered = false; // Reset trigger for new trip
+                
+                // Keep screen awake & play silent audio
+                requestWakeLock();
+                bgAudio.play().catch(e => console.log("Audio block: Tap screen first", e));
+                
+                const toast = document.getElementById('statusToast');
+                const msg = document.getElementById('toastMessage');
+                msg.innerHTML = '<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Live GPS Tracking Active (Screen Lock ON)...';
+                toast.classList.remove('hidden');
+                lucide.createIcons();
+
+                state.watchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
+                        updateMapLayers();
+                        checkGeofence(); // Check alarm every time we move!
+                        
+                        // Keep map centered on user while tracking
+                        map.panTo([state.currentLoc.lat, state.currentLoc.lng], {animate: true, duration: 1});
+                    },
+                    (error) => {
+                        console.error("GPS Watch Error:", error);
+                        msg.innerHTML = 'GPS signal lost. Please check location settings.';
+                        setTimeout(() => toast.classList.add('hidden'), 4000);
+                    },
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+                );
+            }
+            updateUI();
+        }
+
+        function toggleSimulation() {
+            if (state.isSimulating) {
+                // Stop Sim
+                state.isSimulating = false;
+                clearInterval(simInterval);
+                locateUser(); // Reset to user's real location when stopping sim
+                fitBounds();
+            } else {
+                // Start Sim
+                if (!state.targetLoc || !state.alarmLoc) return;
+                state.isSimulating = true;
+                state.hasAlarmTriggered = false; // Reset trigger for new trip
+                
+                if (state.routeCoords && state.routeCoords.length > 0) {
+                    // Simulate movement exactly along the road nodes!
+                    let step = 0;
+                    state.currentLoc = { lat: state.routeCoords[0][1], lng: state.routeCoords[0][0] };
+                    
+                    simInterval = setInterval(() => {
+                        step += 2; // Move 2 nodes at a time for speed
+                        if (step >= state.routeCoords.length - 1) {
+                            clearInterval(simInterval);
+                            state.isSimulating = false;
+                            updateUI();
+                            return;
+                        }
+                        const nextPt = state.routeCoords[step];
+                        state.currentLoc = { lat: nextPt[1], lng: nextPt[0] };
+                        updateMapLayers();
+                        checkGeofence();
+                        
+                        // Make map follow the bus
+                        map.panTo([state.currentLoc.lat, state.currentLoc.lng], {animate: true, duration: 0.4});
+                    }, 400);
+                } else {
+                    // Fallback simulation (straight line)
+                    state.currentLoc = { ...START_LOC };
+                    simInterval = setInterval(() => {
+                        const dist = getDistance(state.currentLoc, state.targetLoc);
+                        if (dist < 50) {
+                            clearInterval(simInterval);
+                            state.isSimulating = false;
+                            updateUI();
+                            return;
+                        }
+                        const fraction = Math.min(200 / dist, 1);
+                        state.currentLoc = interpolatePoint(state.currentLoc, state.targetLoc, fraction);
+                        updateMapLayers();
+                        checkGeofence();
+                    }, 500);
+                }
+            }
+            updateUI();
+        }
+
+        function triggerAlarm() {
+            state.isAlarmRinging = true;
+            state.hasAlarmTriggered = true; // Lock alarm so it doesn't fire again for this trip
+            document.getElementById('alarmOverlay').classList.remove('hidden');
+            document.getElementById('alarmOverlay').classList.add('flex');
+            
+            // Push System Notification (If user is in another app)
+            if (hasNotificationPermission) {
+                new Notification("TransitWake Alarm!", {
+                    body: "Wake Up! You are approaching your destination.",
+                    icon: "https://cdn-icons-png.flaticon.com/512/3203/3203071.png",
+                    vibrate: [500, 500, 500, 500, 500]
+                });
+            }
+
+            // Sound Alarm
+            if (state.alarmType === 'both' || state.alarmType === 'sound') {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                alarmInterval = setInterval(() => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(880, audioCtx.currentTime); 
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start();
+                    gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.3);
+                    osc.stop(audioCtx.currentTime + 0.3);
+                }, 500);
+            }
+
+            // Vibrate Pattern Alarm (supported primarily on mobile Android)
+            if ((state.alarmType === 'both' || state.alarmType === 'vibrate') && navigator.vibrate) {
+                navigator.vibrate([500, 500, 500, 500, 500, 500, 500, 500]);
+            }
+        }
+
+        function stopAlarm() {
+            state.isAlarmRinging = false;
+            document.getElementById('alarmOverlay').classList.add('hidden');
+            document.getElementById('alarmOverlay').classList.remove('flex');
+            clearInterval(alarmInterval);
+            if (navigator.vibrate) navigator.vibrate(0);
+            
+            // REMOVED: Stopping simulation and tracking here.
+            // Now the bus/user will continue to be tracked until they reach the target!
+            
+            updateUI();
+        }
+
+        document.getElementById('btnStopAlarm').addEventListener('click', stopAlarm);
+
+        // UI Handlers for Alarm Type
+        const btnTypeBoth = document.getElementById('btnTypeBoth');
+        const btnTypeSound = document.getElementById('btnTypeSound');
+        const btnTypeVib = document.getElementById('btnTypeVib');
+
+        function setAlarmType(type) {
+            state.alarmType = type;
+            btnTypeBoth.className = `flex-1 py-2 text-xs font-bold rounded-lg transition-all ${type === 'both' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500'}`;
+            btnTypeSound.className = `flex-1 py-2 text-xs font-bold rounded-lg transition-all ${type === 'sound' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500'}`;
+            btnTypeVib.className = `flex-1 py-2 text-xs font-bold rounded-lg transition-all ${type === 'vibrate' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500'}`;
+        }
+        btnTypeBoth.addEventListener('click', () => setAlarmType('both'));
+        btnTypeSound.addEventListener('click', () => setAlarmType('sound'));
+        btnTypeVib.addEventListener('click', () => setAlarmType('vibrate'));
+
+        // Handler for Location Button
+        document.getElementById('btnLocate').addEventListener('click', locateUser);
+
+        const btnDistMode = document.getElementById('btnDistanceMode');
+        const btnManMode = document.getElementById('btnManualMode');
+        const distControls = document.getElementById('distanceControls');
+        const manControls = document.getElementById('manualControls');
+        const distSlider = document.getElementById('distanceSlider');
+        const btnSimulate = document.getElementById('btnSimulate');
+        const btnTrack = document.getElementById('btnTrack');
+        const statusToast = document.getElementById('statusToast');
+        const toastMessage = document.getElementById('toastMessage');
+
+        btnDistMode.addEventListener('click', () => {
+            state.mode = 'distance';
+            state.selectionMode = null;
+            btnDistMode.className = "flex-1 py-2.5 text-sm font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700";
+            btnManMode.className = "flex-1 py-2.5 text-sm font-bold rounded-lg transition-all text-slate-500";
+            distControls.classList.remove('hidden');
+            distControls.classList.add('block');
+            manControls.classList.remove('block');
+            manControls.classList.add('hidden');
+            if (state.targetLoc) calculateDistanceAlarm();
+            updateUI();
+        });
+
+        btnManMode.addEventListener('click', () => {
+            state.mode = 'manual';
+            btnManMode.className = "flex-1 py-2.5 text-sm font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700";
+            btnDistMode.className = "flex-1 py-2.5 text-sm font-bold rounded-lg transition-all text-slate-500";
+            manControls.classList.remove('hidden');
+            manControls.classList.add('block');
+            distControls.classList.remove('block');
+            distControls.classList.add('hidden');
+            updateUI();
+        });
+
+        distSlider.addEventListener('input', (e) => {
+            state.alarmDistance = parseInt(e.target.value);
+            document.getElementById('distanceLabel').innerText = `${state.alarmDistance}m before`;
+            calculateDistanceAlarm();
+        });
+
+        document.getElementById('btnSetManualAlarm').addEventListener('click', () => {
+            state.selectionMode = 'alarm';
+            updateUI();
+        });
+
+        btnSimulate.addEventListener('click', toggleSimulation);
+        
+        btnTrack.addEventListener('click', toggleRealTracking);
+
+        function updateUI() {
+            // Button States
+            const canStart = state.targetLoc && state.alarmLoc;
+            btnSimulate.disabled = !canStart || state.isTracking;
+            btnTrack.disabled = !canStart || state.isSimulating;
+
+            if (state.isSimulating) {
+                document.getElementById('simBtnText').innerText = "Stop Sim";
+                btnSimulate.classList.replace('bg-slate-800', 'bg-amber-500');
+                btnSimulate.classList.replace('hover:bg-slate-900', 'hover:bg-amber-600');
+            } else {
+                document.getElementById('simBtnText').innerText = "Simulate";
+                btnSimulate.classList.replace('bg-amber-500', 'bg-slate-800');
+                btnSimulate.classList.replace('hover:bg-amber-600', 'hover:bg-slate-900');
+            }
+
+            if (state.isTracking) {
+                document.getElementById('trackBtnText').innerText = "Tracking Active";
+                btnTrack.classList.replace('bg-indigo-600', 'bg-red-500');
+                btnTrack.classList.replace('shadow-indigo-600/30', 'shadow-red-500/30');
+                document.getElementById('trackIcon').classList.add('animate-pulse');
+            } else {
+                document.getElementById('trackBtnText').innerText = "Start Tracking";
+                btnTrack.classList.replace('bg-red-500', 'bg-indigo-600');
+                btnTrack.classList.replace('shadow-red-500/30', 'shadow-indigo-600/30');
+                document.getElementById('trackIcon').classList.remove('animate-pulse');
+            }
+
+            // Manual Mode Btn State
+            const manualBtn = document.getElementById('btnSetManualAlarm');
+            if (state.selectionMode === 'alarm') {
+                manualBtn.classList.add('border-blue-500', 'bg-blue-50', 'text-blue-700');
+                document.getElementById('manualBtnText').innerText = "Tap on map now...";
+            } else {
+                manualBtn.classList.remove('border-blue-500', 'bg-blue-50', 'text-blue-700');
+                document.getElementById('manualBtnText').innerText = state.alarmLoc ? "Change Alarm Spot" : "Tap map to set Alarm Spot";
+            }
+
+            // Toast State
+            if (!state.targetLoc && !state.selectionMode) {
+                statusToast.classList.remove('hidden');
+                toastMessage.innerHTML = '<i data-lucide="search" class="w-4 h-4 mr-2"></i> Search or tap map to set Target';
+                toastMessage.className = "bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-bounce";
+            } else if (state.selectionMode === 'alarm') {
+                statusToast.classList.remove('hidden');
+                toastMessage.innerHTML = '<i data-lucide="map-pin" class="w-4 h-4 mr-2"></i> Tap anywhere on map to drop Alarm Pin';
+                toastMessage.className = "bg-blue-600 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-pulse";
+            } else {
+                statusToast.classList.add('hidden');
+            }
+            lucide.createIcons();
+        }
+
+        // Initialize on load
+        window.onload = () => {
+            initMap();
+            updateUI();
+            locateUser(); // Ask permission & set actual location automatically
+            
+            // Request Notification Permission on load
+            if ("Notification" in window) {
+                Notification.requestPermission().then(permission => {
+                    hasNotificationPermission = permission === "granted";
+                });
+            }
+        };
+
+    </script>
+</body>
+</html>
