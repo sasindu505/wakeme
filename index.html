@@ -16,20 +16,20 @@
         body { font-family: 'Inter', sans-serif; margin: 0; padding: 0; overflow: hidden; background-color: #f8fafc; }
         #map { width: 100%; height: 100vh; z-index: 0; }
         
-        /* Custom map marker styles */
         .custom-marker { display: flex; justify-content: center; align-items: center; border-radius: 50%; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 3px solid white; transition: all 0.3s ease; }
-        .marker-current { background-color: #22c55e; z-index: 1000 !important; } /* Green */
-        .marker-target { background-color: #ef4444; } /* Red */
-        .marker-alarm { background-color: #3b82f6; } /* Blue */
+        .marker-current { background-color: #22c55e; z-index: 1000 !important; } 
+        .marker-target { background-color: #ef4444; } 
+        .marker-alarm { background-color: #3b82f6; } 
 
-        /* Search Dropdown Scrollbar hide */
         #searchResults::-webkit-scrollbar { display: none; }
         #searchResults { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="relative h-screen w-full flex flex-col">
 
+    <!-- Top Floating Elements Container -->
     <div class="absolute top-0 w-full z-[1000] p-4 flex flex-col gap-2 pointer-events-none">
+        
         <!-- Logo -->
         <div class="bg-white/95 backdrop-blur shadow-md rounded-2xl p-3 flex items-center justify-center pointer-events-auto">
             <i data-lucide="bell" class="w-5 h-5 text-indigo-600 mr-2"></i>
@@ -38,91 +38,105 @@
 
         <!-- Search Bar -->
         <div class="relative pointer-events-auto">
-            <div class="bg-white rounded-xl shadow-lg flex items-center px-4 py-3 border border-slate-100 transition-all focus-within:ring-2 ring-indigo-500">
+            <div class="bg-white rounded-xl shadow-lg flex items-center px-4 py-3 border border-slate-100">
                 <i data-lucide="search" class="w-5 h-5 text-slate-400"></i>
                 <input type="text" id="searchInput" placeholder="Search town or location..." class="w-full bg-transparent border-none outline-none ml-3 text-slate-700 font-medium placeholder-slate-400">
                 <button id="clearSearch" class="hidden text-slate-400 hover:text-slate-600">
                     <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
             </div>
-            <!-- Search Results Dropdown -->
             <ul id="searchResults" class="absolute w-full mt-2 bg-white rounded-xl shadow-xl max-h-60 overflow-y-auto hidden border border-slate-100">
-                <!-- Results populated by JS -->
+                <!-- Results -->
             </ul>
         </div>
         
         <!-- Status Toast -->
         <div id="statusToast" class="hidden mt-2 text-center pointer-events-auto transition-all">
-            <span class="bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-pulse" id="toastMessage">
-                Message
-            </span>
+            <span class="bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-pulse" id="toastMessage"></span>
+        </div>
+
+        <!-- NEW: Live Trip Distance HUD -->
+        <div id="tripStats" class="hidden mt-2 bg-white/95 backdrop-blur shadow-lg rounded-xl p-3 flex-col gap-2 border border-slate-100 w-fit pointer-events-auto">
+            <div class="flex items-center text-xs font-semibold text-slate-600">
+                <div class="w-2.5 h-2.5 rounded-full bg-blue-500 mr-2 animate-pulse"></div> 
+                Alarm in: <span id="statAlarm" class="ml-2 text-blue-700 font-bold text-sm tracking-wide">--</span>
+            </div>
+            <div class="flex items-center text-xs font-semibold text-slate-600">
+                <div class="w-2.5 h-2.5 rounded-full bg-red-500 mr-2"></div> 
+                Target in: <span id="statTarget" class="ml-2 text-red-600 font-bold text-sm tracking-wide">--</span>
+            </div>
         </div>
     </div>
 
-    <!-- Silent Base64 WAV file to trick OS into keeping process alive -->
+    <!-- Background Keep-Alive Audio (Silent) -->
     <audio id="bgAudio" loop playsinline>
         <source src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA" type="audio/wav">
     </audio>
 
     <!-- Locate Me Button -->
-    <button id="btnLocate" class="absolute right-6 z-[1000] bg-white p-3 rounded-full shadow-xl text-slate-700 hover:text-indigo-600 transition-colors border border-slate-100 flex items-center justify-center" style="bottom: 340px;">
+    <button id="btnLocate" class="absolute right-6 z-[1000] bg-white p-3 rounded-full shadow-xl text-slate-700 hover:text-indigo-600 transition-colors border border-slate-100 flex items-center justify-center" style="bottom: 340px;" id="locateBtnRef">
         <i data-lucide="crosshair" class="w-6 h-6"></i>
     </button>
 
-    <!-- Main Map Container -->
+    <!-- Map Canvas -->
     <div id="map" class="flex-1 w-full bg-slate-200 cursor-crosshair"></div>
 
-    <div class="absolute bottom-0 w-full z-[1000] bg-white rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-8 transition-transform duration-300">
-        <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-4"></div>
+    <!-- NEW: Minimizable Bottom Control Panel -->
+    <div id="bottomPanel" class="absolute bottom-0 w-full z-[1000] bg-white rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] px-6 pt-2 pb-8 transition-transform duration-500 ease-in-out" style="transform: translateY(0);">
         
-        <!-- Alarm Type Switcher -->
-        <div class="flex bg-slate-100 p-1 rounded-xl mb-4">
-            <button id="btnTypeBoth" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700">Sound + Vibrate</button>
-            <button id="btnTypeSound" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500">Sound Only</button>
-            <button id="btnTypeVib" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500">Vibrate Only</button>
+        <!-- Pull Handle / Toggle Button -->
+        <div id="panelToggle" class="w-full flex flex-col items-center justify-center pb-4 cursor-pointer">
+            <div class="w-12 h-1.5 bg-slate-200 rounded-full mb-1"></div>
+            <i data-lucide="chevron-down" id="panelToggleIcon" class="w-5 h-5 text-slate-400 transition-transform"></i>
         </div>
-
-        <!-- Mode Switcher -->
-        <div class="flex bg-slate-100 p-1 rounded-xl mb-6">
-            <button id="btnDistanceMode" class="flex-1 py-2.5 text-sm font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700">
-                Distance Base
-            </button>
-            <button id="btnManualMode" class="flex-1 py-2.5 text-sm font-bold rounded-lg transition-all text-slate-500">
-                Manual Pin
-            </button>
-        </div>
-
-        <!-- Distance Mode Controls -->
-        <div id="distanceControls" class="mb-6 space-y-4 block">
-            <div class="flex justify-between text-sm font-medium text-slate-600">
-                <span>Wake me up</span>
-                <span class="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded" id="distanceLabel">1000m before</span>
+        
+        <div id="panelContent" class="transition-opacity duration-300">
+            <!-- Alarm Type Switcher -->
+            <div class="flex bg-slate-100 p-1 rounded-xl mb-4">
+                <button id="btnTypeBoth" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700">Sound + Vibrate</button>
+                <button id="btnTypeSound" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500">Sound Only</button>
+                <button id="btnTypeVib" class="flex-1 py-2 text-xs font-bold rounded-lg transition-all text-slate-500">Vibrate Only</button>
             </div>
-            <input type="range" id="distanceSlider" min="200" max="5000" step="100" value="1000" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600">
-        </div>
 
-        <!-- Manual Mode Controls -->
-        <div id="manualControls" class="mb-6 hidden">
-            <button id="btnSetManualAlarm" class="w-full py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 flex items-center justify-center space-x-2 transition-colors font-medium">
-                <i data-lucide="map-pin" class="w-5 h-5"></i>
-                <span id="manualBtnText">Tap map to set Alarm Spot</span>
-            </button>
-        </div>
+            <!-- Mode Switcher -->
+            <div class="flex bg-slate-100 p-1 rounded-xl mb-6">
+                <button id="btnDistanceMode" class="flex-1 py-2.5 text-sm font-bold rounded-lg transition-all bg-white shadow-sm text-indigo-700">Distance Base</button>
+                <button id="btnManualMode" class="flex-1 py-2.5 text-sm font-bold rounded-lg transition-all text-slate-500">Manual Pin</button>
+            </div>
 
-        <!-- Action Buttons -->
-        <div class="flex space-x-3">
-            <button id="btnSimulate" class="flex-1 py-4 rounded-xl flex justify-center items-center font-bold text-white bg-slate-800 hover:bg-slate-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                <i data-lucide="play" class="w-5 h-5 mr-2"></i>
-                <span id="simBtnText">Simulate</span>
-            </button>
-            
-            <button id="btnTrack" class="flex-[2] py-4 rounded-xl flex justify-center items-center font-bold text-white bg-indigo-600 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 disabled:shadow-none">
-                <i data-lucide="navigation" class="w-5 h-5 mr-2" id="trackIcon"></i>
-                <span id="trackBtnText">Start Tracking</span>
-            </button>
+            <!-- Distance Mode Controls -->
+            <div id="distanceControls" class="mb-6 space-y-4 block">
+                <div class="flex justify-between text-sm font-medium text-slate-600">
+                    <span>Wake me up</span>
+                    <span class="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded" id="distanceLabel">1000m before</span>
+                </div>
+                <input type="range" id="distanceSlider" min="200" max="5000" step="100" value="1000" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600">
+            </div>
+
+            <!-- Manual Mode Controls -->
+            <div id="manualControls" class="mb-6 hidden">
+                <button id="btnSetManualAlarm" class="w-full py-3 rounded-xl border-2 border-dashed border-slate-300 text-slate-600 hover:bg-slate-50 flex items-center justify-center space-x-2 transition-colors font-medium">
+                    <i data-lucide="map-pin" class="w-5 h-5"></i>
+                    <span id="manualBtnText">Tap map to set Alarm Spot</span>
+                </button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex space-x-3">
+                <button id="btnSimulate" class="flex-1 py-4 rounded-xl flex justify-center items-center font-bold text-white bg-slate-800 hover:bg-slate-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i data-lucide="play" class="w-5 h-5 mr-2"></i>
+                    <span id="simBtnText">Simulate</span>
+                </button>
+                
+                <button id="btnTrack" class="flex-[2] py-4 rounded-xl flex justify-center items-center font-bold text-white bg-indigo-600 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 disabled:shadow-none">
+                    <i data-lucide="navigation" class="w-5 h-5 mr-2" id="trackIcon"></i>
+                    <span id="trackBtnText">Start Tracking</span>
+                </button>
+            </div>
         </div>
     </div>
 
+    <!-- Alarm Fullscreen Overlay -->
     <div id="alarmOverlay" class="hidden absolute inset-0 z-[9999] bg-red-600 animate-[pulse_0.5s_ease-in-out_infinite] flex-col items-center justify-center p-6 text-white text-center">
         <i data-lucide="bell-ring" class="w-32 h-32 mb-6 animate-bounce"></i>
         <h1 class="text-5xl font-black mb-4 uppercase tracking-tighter">Wake Up!</h1>
@@ -135,7 +149,7 @@
     <script>
         lucide.createIcons();
 
-        const START_LOC = { lat: 6.9271, lng: 79.8612 }; // Default: Colombo
+        const START_LOC = { lat: 6.9271, lng: 79.8612 }; 
         let state = {
             currentLoc: { ...START_LOC },
             targetLoc: null,
@@ -143,7 +157,7 @@
             mode: 'distance', 
             selectionMode: null, 
             alarmDistance: 1000,
-            alarmType: 'both', // 'both', 'sound', 'vibrate'
+            alarmType: 'both', 
             routeCoords: [], 
             isSimulating: false,
             isTracking: false,
@@ -160,16 +174,73 @@
         let alarmInterval;
         let wakeLock = null;
         let hasNotificationPermission = false;
+        
+        let isPanelMinimized = false; // Panel state
 
+        // UI Panel Min/Max Logic
+        const bottomPanel = document.getElementById('bottomPanel');
+        const panelToggle = document.getElementById('panelToggle');
+        const panelToggleIcon = document.getElementById('panelToggleIcon');
+        const panelContent = document.getElementById('panelContent');
+        const locateBtn = document.getElementById('btnLocate');
+
+        panelToggle.addEventListener('click', () => {
+            isPanelMinimized = !isPanelMinimized;
+            if (isPanelMinimized) {
+                // Minimize - Hide content and slide down
+                panelContent.style.opacity = '0';
+                panelContent.style.pointerEvents = 'none';
+                bottomPanel.style.transform = `translateY(calc(100% - 40px))`;
+                panelToggleIcon.setAttribute('data-lucide', 'chevron-up');
+                locateBtn.style.bottom = '80px';
+            } else {
+                // Maximize
+                panelContent.style.opacity = '1';
+                panelContent.style.pointerEvents = 'auto';
+                bottomPanel.style.transform = `translateY(0)`;
+                panelToggleIcon.setAttribute('data-lucide', 'chevron-down');
+                locateBtn.style.bottom = '340px';
+            }
+            lucide.createIcons();
+        });
+
+        // Format Distance string helper
+        function formatDistanceDisplay(meters) {
+            if (meters < 1000) return Math.round(meters) + ' m';
+            return (meters / 1000).toFixed(2) + ' km';
+        }
+
+        // Live Trip HUD Updater
+        function updateTripStats() {
+            const statsEl = document.getElementById('tripStats');
+            if (!state.targetLoc && !state.isSimulating && !state.isTracking) {
+                statsEl.classList.add('hidden');
+                statsEl.classList.remove('flex');
+                return;
+            }
+            
+            statsEl.classList.remove('hidden');
+            statsEl.classList.add('flex');
+            
+            if (state.alarmLoc) {
+                const distA = getDistance(state.currentLoc, state.alarmLoc);
+                // If alarm triggered or passed, show 0m
+                document.getElementById('statAlarm').innerText = state.hasAlarmTriggered ? 'Reached' : formatDistanceDisplay(distA);
+            }
+            
+            if (state.targetLoc) {
+                const distT = getDistance(state.currentLoc, state.targetLoc);
+                document.getElementById('statTarget').innerText = distT < 50 ? 'Arrived' : formatDistanceDisplay(distT);
+            }
+        }
+
+        // Wake Lock
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    wakeLock.addEventListener('release', () => console.log('Wake Lock released'));
                 }
-            } catch (err) {
-                console.error(`Wake Lock Error: ${err.message}`);
-            }
+            } catch (err) { console.error(`Wake Lock Error: ${err.message}`); }
         }
 
         function releaseWakeLock() {
@@ -179,33 +250,19 @@
         }
 
         document.addEventListener('visibilitychange', async () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') {
-                requestWakeLock();
-            }
+            if (wakeLock !== null && document.visibilityState === 'visible') requestWakeLock();
         });
 
         function initAudioContext() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
         }
 
         function initMap() {
             map = L.map('map', { zoomControl: false, tap: false }).setView([state.currentLoc.lat, state.currentLoc.lng], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap',
-                maxZoom: 19
-            }).addTo(map);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 19 }).addTo(map);
 
-            const createIcon = (className) => L.divIcon({
-                className: `custom-marker ${className}`,
-                iconSize: [24, 24],
-                iconAnchor: [12, 12]
-            });
-
+            const createIcon = (className) => L.divIcon({ className: `custom-marker ${className}`, iconSize: [24, 24], iconAnchor: [12, 12] });
             currentMarker = L.marker([state.currentLoc.lat, state.currentLoc.lng], { icon: createIcon('marker-current'), zIndexOffset: 1000 }).addTo(map);
 
             map.on('click', function(e) {
@@ -225,36 +282,25 @@
             const lat2 = pos2.lat * Math.PI / 180;
             const deltaLat = (pos2.lat - pos1.lat) * Math.PI / 180;
             const deltaLng = (pos2.lng - pos1.lng) * Math.PI / 180;
-
-            const a = Math.sin(deltaLat/2) * Math.sin(deltaLat/2) +
-                      Math.cos(lat1) * Math.cos(lat2) *
-                      Math.sin(deltaLng/2) * Math.sin(deltaLng/2);
+            const a = Math.sin(deltaLat/2) * Math.sin(deltaLat/2) + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng/2) * Math.sin(deltaLng/2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            return R * c; // meters
+            return R * c; 
         }
 
         function interpolatePoint(start, end, fraction) {
-            return {
-                lat: start.lat + (end.lat - start.lat) * fraction,
-                lng: start.lng + (end.lng - start.lng) * fraction
-            };
+            return { lat: start.lat + (end.lat - start.lat) * fraction, lng: start.lng + (end.lng - start.lng) * fraction };
         }
 
         function locateUser(isInitial = false) {
             if (navigator.geolocation) {
-                showToast('<i data-lucide="loader" class="w-4 h-4 mr-2 animate-spin"></i> Acquiring GPS Signal...');
-                
+                showToast('<i data-lucide="loader" class="w-4 h-4 mr-2 animate-spin"></i> Acquiring GPS...');
                 navigator.geolocation.getCurrentPosition((position) => {
                     state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
                     if(currentMarker) currentMarker.setLatLng([state.currentLoc.lat, state.currentLoc.lng]);
-                    
-                    if (isInitial || !state.isTracking) {
-                        map.setView([state.currentLoc.lat, state.currentLoc.lng], 15);
-                    }
+                    if (isInitial || !state.isTracking) map.setView([state.currentLoc.lat, state.currentLoc.lng], 15);
                     hideToast();
                     if(state.targetLoc) fetchRoute();
                 }, (error) => {
-                    console.error("Location error", error);
                     showToast('Location access denied or poor signal.', true);
                 }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
             }
@@ -262,7 +308,6 @@
 
         async function fetchRoute() {
             if(!state.targetLoc) return;
-            // Real Road Navigation Geometry
             const url = `https://router.project-osrm.org/route/v1/driving/${state.currentLoc.lng},${state.currentLoc.lat};${state.targetLoc.lng},${state.targetLoc.lat}?overview=full&geometries=geojson`;
             try {
                 const res = await fetch(url);
@@ -273,7 +318,6 @@
                     if (state.mode === 'distance') calculateDistanceAlarm();
                 }
             } catch(error) {
-                console.error("OSRM Route fetch failed, falling back to straight line", error);
                 state.routeCoords = [];
                 if (state.mode === 'distance') calculateDistanceAlarm();
             }
@@ -282,34 +326,30 @@
         function setTargetLocation(lat, lng) {
             state.targetLoc = { lat, lng };
             document.getElementById('searchInput').value = ""; 
-            
-            // Re-triggering new trip logic
             state.hasAlarmTriggered = false; 
-            
             fetchRoute();
             updateMapLayers();
             fitBounds();
             updateUI();
+            updateTripStats(); // Update HUD
         }
 
         function setAlarmLocation(lat, lng) {
             state.alarmLoc = { lat, lng };
-            state.hasAlarmTriggered = false; // Reset trigger if alarm is moved
+            state.hasAlarmTriggered = false; 
             updateMapLayers();
             updateUI();
+            updateTripStats(); // Update HUD
         }
 
         function calculateDistanceAlarm() {
             if (!state.targetLoc) return;
-            
             if (state.routeCoords && state.routeCoords.length > 0) {
-                // Backtrack along the road path
                 let accumulatedDistance = 0;
                 for (let i = state.routeCoords.length - 1; i > 0; i--) {
                     const p1 = { lat: state.routeCoords[i][1], lng: state.routeCoords[i][0] };
                     const p2 = { lat: state.routeCoords[i-1][1], lng: state.routeCoords[i-1][0] };
                     accumulatedDistance += getDistance(p1, p2);
-                    
                     if (accumulatedDistance >= state.alarmDistance) {
                         setAlarmLocation(p2.lat, p2.lng);
                         return;
@@ -317,7 +357,6 @@
                 }
                 setAlarmLocation(state.currentLoc.lat, state.currentLoc.lng);
             } else {
-                // Straight line fallback
                 const totalDistance = getDistance(state.currentLoc, state.targetLoc);
                 if (totalDistance <= state.alarmDistance) {
                     setAlarmLocation(state.currentLoc.lat, state.currentLoc.lng);
@@ -331,7 +370,6 @@
 
         function updateMapLayers() {
             const createIcon = (className) => L.divIcon({ className: `custom-marker ${className}`, iconSize: [24, 24], iconAnchor: [12, 12] });
-
             currentMarker.setLatLng([state.currentLoc.lat, state.currentLoc.lng]);
 
             if (state.targetLoc) {
@@ -342,24 +380,15 @@
             if (state.alarmLoc) {
                 if (!alarmMarker) alarmMarker = L.marker([state.alarmLoc.lat, state.alarmLoc.lng], { icon: createIcon('marker-alarm') }).addTo(map);
                 else alarmMarker.setLatLng([state.alarmLoc.lat, state.alarmLoc.lng]);
-
                 if (!geofenceCircle) {
                     geofenceCircle = L.circle([state.alarmLoc.lat, state.alarmLoc.lng], {
                         color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.2, radius: 200, dashArray: '5, 5'
                     }).addTo(map);
-                } else {
-                    geofenceCircle.setLatLng([state.alarmLoc.lat, state.alarmLoc.lng]);
-                }
+                } else { geofenceCircle.setLatLng([state.alarmLoc.lat, state.alarmLoc.lng]); }
             }
 
             if (state.targetLoc) {
-                let latlngs = [];
-                if (state.routeCoords && state.routeCoords.length > 0) {
-                    latlngs = state.routeCoords.map(coord => [coord[1], coord[0]]);
-                } else {
-                    latlngs = [[state.currentLoc.lat, state.currentLoc.lng], [state.targetLoc.lat, state.targetLoc.lng]];
-                }
-                
+                let latlngs = state.routeCoords && state.routeCoords.length > 0 ? state.routeCoords.map(coord => [coord[1], coord[0]]) : [[state.currentLoc.lat, state.currentLoc.lng], [state.targetLoc.lat, state.targetLoc.lng]];
                 if (!routeLine) routeLine = L.polyline(latlngs, {color: '#6366f1', weight: 5, opacity: 0.8}).addTo(map);
                 else routeLine.setLatLngs(latlngs);
             }
@@ -380,25 +409,15 @@
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
             const query = e.target.value;
-            
             if (query.length > 0) clearSearch.classList.remove('hidden');
-            else {
-                clearSearch.classList.add('hidden');
-                searchResults.classList.add('hidden');
-            }
-
+            else { clearSearch.classList.add('hidden'); searchResults.classList.add('hidden'); }
             if (query.length < 3) return;
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    // Include email to comply with Nominatim AUP
-                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=lk&limit=5&email=contact@transitwake.site`, {
-                        headers: { 'Accept': 'application/json', 'Accept-Language': 'en-US,en' }
-                    });
-                    
-                    if (!res.ok) throw new Error("Search API blocked");
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=lk&limit=5&email=test@transitwake.com`, { headers: { 'Accept': 'application/json' } });
+                    if (!res.ok) throw new Error("API Blocked");
                     const data = await res.json();
-                    
                     searchResults.innerHTML = '';
                     if (data.length > 0) {
                         data.forEach(item => {
@@ -415,88 +434,59 @@
                         });
                         searchResults.classList.remove('hidden');
                         lucide.createIcons();
-                    } else {
-                        searchResults.classList.add('hidden');
-                    }
-                } catch (error) {
-                    console.error("Search engine failed", error);
-                }
+                    } else searchResults.classList.add('hidden');
+                } catch (error) { console.error(error); }
             }, 500); 
         });
 
-        clearSearch.addEventListener('click', () => {
-            searchInput.value = '';
-            searchResults.classList.add('hidden');
-            clearSearch.classList.add('hidden');
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
-                searchResults.classList.add('hidden');
-            }
-        });
+        clearSearch.addEventListener('click', () => { searchInput.value = ''; searchResults.classList.add('hidden'); clearSearch.classList.add('hidden'); });
+        document.addEventListener('click', (e) => { if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) searchResults.classList.add('hidden'); });
 
         function checkGeofence() {
             if (!state.alarmLoc || state.hasAlarmTriggered) return;
             const dist = getDistance(state.currentLoc, state.alarmLoc);
-            // 200 meter geofence radius
-            if (dist <= 200 && !state.isAlarmRinging) {
-                triggerAlarm();
-            }
+            if (dist <= 200 && !state.isAlarmRinging) triggerAlarm();
         }
 
+        // Layer 1, 2, 3 Background Persistence Engine
         function toggleRealTracking() {
-            initAudioContext(); // Initialize immediately on user action
+            initAudioContext(); 
             const bgAudio = document.getElementById('bgAudio');
             
             if (state.isTracking) {
-                // STOP TRACKING
                 state.isTracking = false;
-                if (state.watchId !== null) {
-                    navigator.geolocation.clearWatch(state.watchId);
-                    state.watchId = null;
-                }
-                if (activePollingInterval !== null) {
-                    clearInterval(activePollingInterval); // Kill Layer 3
-                    activePollingInterval = null;
-                }
-                bgAudio.pause(); // Kill Layer 1 & 2
-                releaseWakeLock(); // Release WakeLock
+                if (state.watchId !== null) { navigator.geolocation.clearWatch(state.watchId); state.watchId = null; }
+                if (activePollingInterval !== null) { clearInterval(activePollingInterval); activePollingInterval = null; }
+                bgAudio.pause(); 
+                releaseWakeLock(); 
                 hideToast();
             } else {
-                // START TRACKING
                 if (!state.targetLoc || !state.alarmLoc) return;
-                
                 state.isTracking = true;
                 state.hasAlarmTriggered = false; 
-                
                 requestWakeLock();
                 
-                // Layer 1 & 2: Sub-audible Engine
                 bgAudio.volume = 0.01; 
                 bgAudio.play().catch(e => {
-                    console.warn("Audio Context blocked. User must interact.", e);
-                    showToast("Please tap the screen anywhere, then try again.", true);
+                    showToast("Please tap the screen, then try again.", true);
                     state.isTracking = false;
                     return;
                 });
                 
-                showToast('<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Ultra-Tracking Active (Background ON)...');
+                showToast('<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Ultra-Tracking Active...');
 
-                // Main GPS Hardware Stream
                 state.watchId = navigator.geolocation.watchPosition(
                     (position) => {
                         state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
                         updateMapLayers();
                         checkGeofence(); 
+                        updateTripStats();
                         map.panTo([state.currentLoc.lat, state.currentLoc.lng], {animate: true, duration: 1});
                     },
                     (error) => { console.warn("GPS Stream interrupted:", error); },
                     { enableHighAccuracy: true, maximumAge: 0, timeout: 8000 }
                 );
 
-                // Layer 3: Active Backup Polling
-                // Forces browser to execute JS and request GPS even when suspended
                 activePollingInterval = setInterval(() => {
                     if (state.isTracking && navigator.geolocation) {
                         navigator.geolocation.getCurrentPosition(
@@ -504,13 +494,12 @@
                                 state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
                                 updateMapLayers();
                                 checkGeofence();
-                                // Do not pan map in background polling to save CPU
+                                updateTripStats();
                             },
-                            () => {}, // Ignore polling errors silently
-                            { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+                            () => {}, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
                         );
                     }
-                }, 10000); // Pulse every 10s
+                }, 10000); 
             }
             updateUI();
         }
@@ -529,7 +518,6 @@
                 if (state.routeCoords && state.routeCoords.length > 0) {
                     let step = 0;
                     state.currentLoc = { lat: state.routeCoords[0][1], lng: state.routeCoords[0][0] };
-                    
                     simInterval = setInterval(() => {
                         step += 2; 
                         if (step >= state.routeCoords.length - 1) {
@@ -542,22 +530,19 @@
                         state.currentLoc = { lat: nextPt[1], lng: nextPt[0] };
                         updateMapLayers();
                         checkGeofence();
+                        updateTripStats();
                         map.panTo([state.currentLoc.lat, state.currentLoc.lng], {animate: true, duration: 0.4});
                     }, 400);
                 } else {
                     state.currentLoc = { ...START_LOC };
                     simInterval = setInterval(() => {
                         const dist = getDistance(state.currentLoc, state.targetLoc);
-                        if (dist < 50) {
-                            clearInterval(simInterval);
-                            state.isSimulating = false;
-                            updateUI();
-                            return;
-                        }
+                        if (dist < 50) { clearInterval(simInterval); state.isSimulating = false; updateUI(); return; }
                         const fraction = Math.min(200 / dist, 1);
                         state.currentLoc = interpolatePoint(state.currentLoc, state.targetLoc, fraction);
                         updateMapLayers();
                         checkGeofence();
+                        updateTripStats();
                     }, 500);
                 }
             }
@@ -566,7 +551,6 @@
 
         function triggerAlarm() {
             if (state.hasAlarmTriggered) return;
-            
             state.isAlarmRinging = true;
             state.hasAlarmTriggered = true; 
             
@@ -574,23 +558,21 @@
             overlay.classList.remove('hidden');
             overlay.classList.add('flex');
             
-            // Push OS Level Notification
             if (hasNotificationPermission) {
                 new Notification("TransitWake Alarm!", {
                     body: "Wake Up! You are arriving at your destination.",
                     icon: "https://cdn-icons-png.flaticon.com/512/3203/3203071.png",
                     requireInteraction: true,
-                    vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250]
+                    vibrate: [500, 250, 500, 250, 500]
                 });
             }
 
-            // Web Audio API Synthesis
             if (state.alarmType === 'both' || state.alarmType === 'sound') {
                 initAudioContext();
                 alarmInterval = setInterval(() => {
                     const osc = audioCtx.createOscillator();
                     const gain = audioCtx.createGain();
-                    osc.type = 'square'; // Harsh, attention-grabbing waveform
+                    osc.type = 'square'; 
                     osc.frequency.setValueAtTime(880, audioCtx.currentTime); 
                     osc.connect(gain);
                     gain.connect(audioCtx.destination);
@@ -600,15 +582,9 @@
                 }, 400);
             }
 
-            // Haptic Feedback
             if ((state.alarmType === 'both' || state.alarmType === 'vibrate') && navigator.vibrate) {
                 navigator.vibrate([500, 250, 500, 250, 500, 250, 500, 250]);
-                // Set interval to keep vibrating if browser allows
-                if(!alarmInterval) {
-                     alarmInterval = setInterval(() => {
-                         navigator.vibrate([500, 250, 500, 250]);
-                     }, 1500);
-                }
+                if(!alarmInterval) { alarmInterval = setInterval(() => { navigator.vibrate([500, 250, 500, 250]); }, 1500); }
             }
         }
 
@@ -618,14 +594,10 @@
             overlay.classList.add('hidden');
             overlay.classList.remove('flex');
             
-            if(alarmInterval) {
-                clearInterval(alarmInterval);
-                alarmInterval = null;
-            }
+            if(alarmInterval) { clearInterval(alarmInterval); alarmInterval = null; }
             if (navigator.vibrate) navigator.vibrate(0);
-            
-            // Note: Tracking continuous to run towards target. hasAlarmTriggered is kept TRUE
             updateUI();
+            updateTripStats();
         }
 
         document.getElementById('btnStopAlarm').addEventListener('click', stopAlarm);
@@ -701,9 +673,7 @@
             if(autoHide) setTimeout(hideToast, 4000);
         }
 
-        function hideToast() {
-            statusToast.classList.add('hidden');
-        }
+        function hideToast() { statusToast.classList.add('hidden'); }
 
         function updateUI() {
             const canStart = state.targetLoc && state.alarmLoc;
@@ -741,16 +711,13 @@
                 document.getElementById('manualBtnText').innerText = state.alarmLoc ? "Change Alarm Spot" : "Tap map to set Alarm Spot";
             }
 
-            // Manage Toast Guidance
             if (!state.targetLoc && !state.selectionMode && !state.isTracking && !state.isSimulating) {
                 showToast('<i data-lucide="search" class="w-4 h-4 mr-2"></i> Search or tap map to set Target');
                 toastMessage.className = "bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-bounce";
             } else if (state.selectionMode === 'alarm') {
                 showToast('<i data-lucide="map-pin" class="w-4 h-4 mr-2"></i> Tap anywhere on map to drop Alarm Pin');
                 toastMessage.className = "bg-blue-600 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-pulse";
-            } else if (!state.isTracking && !state.isSimulating) {
-                hideToast();
-            }
+            } else if (!state.isTracking && !state.isSimulating) { hideToast(); }
         }
 
         window.onload = () => {
@@ -758,14 +725,10 @@
             updateUI();
             locateUser(true); 
             
-            // Proactive permission handling
             if ("Notification" in window) {
-                Notification.requestPermission().then(permission => {
-                    hasNotificationPermission = permission === "granted";
-                });
+                Notification.requestPermission().then(permission => { hasNotificationPermission = permission === "granted"; });
             }
             
-            // Unlock audio context cleanly on first document interaction
             const unlockAudio = () => {
                 initAudioContext();
                 document.removeEventListener('click', unlockAudio);
@@ -774,7 +737,6 @@
             document.addEventListener('click', unlockAudio);
             document.addEventListener('touchstart', unlockAudio);
         };
-
     </script>
 </body>
 </html>
