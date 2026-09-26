@@ -10,7 +10,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <!-- Lucide Icons (Browser version) -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
@@ -18,14 +17,14 @@
         #map { width: 100%; height: 100vh; z-index: 0; }
         
         /* Custom map marker styles */
-        .custom-marker { display: flex; justify-content: center; align-items: center; border-radius: 50%; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 3px solid white; }
-        .marker-current { background-color: #22c55e; } /* Green */
+        .custom-marker { display: flex; justify-content: center; align-items: center; border-radius: 50%; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 3px solid white; transition: all 0.3s ease; }
+        .marker-current { background-color: #22c55e; z-index: 1000 !important; } /* Green */
         .marker-target { background-color: #ef4444; } /* Red */
         .marker-alarm { background-color: #3b82f6; } /* Blue */
 
         /* Search Dropdown Scrollbar hide */
-        #search-results::-webkit-scrollbar { display: none; }
-        #search-results { -ms-overflow-style: none; scrollbar-width: none; }
+        #searchResults::-webkit-scrollbar { display: none; }
+        #searchResults { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="relative h-screen w-full flex flex-col">
@@ -39,7 +38,7 @@
 
         <!-- Search Bar -->
         <div class="relative pointer-events-auto">
-            <div class="bg-white rounded-xl shadow-lg flex items-center px-4 py-3 border border-slate-100">
+            <div class="bg-white rounded-xl shadow-lg flex items-center px-4 py-3 border border-slate-100 transition-all focus-within:ring-2 ring-indigo-500">
                 <i data-lucide="search" class="w-5 h-5 text-slate-400"></i>
                 <input type="text" id="searchInput" placeholder="Search town or location..." class="w-full bg-transparent border-none outline-none ml-3 text-slate-700 font-medium placeholder-slate-400">
                 <button id="clearSearch" class="hidden text-slate-400 hover:text-slate-600">
@@ -48,7 +47,7 @@
             </div>
             <!-- Search Results Dropdown -->
             <ul id="searchResults" class="absolute w-full mt-2 bg-white rounded-xl shadow-xl max-h-60 overflow-y-auto hidden border border-slate-100">
-                <!-- Results will be populated here by JS -->
+                <!-- Results populated by JS -->
             </ul>
         </div>
         
@@ -60,8 +59,8 @@
         </div>
     </div>
 
-    <!-- Background Keep-Alive Audio (Silent) -->
-    <audio id="bgAudio" loop>
+    <!-- Silent Base64 WAV file to trick OS into keeping process alive -->
+    <audio id="bgAudio" loop playsinline>
         <source src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA" type="audio/wav">
     </audio>
 
@@ -70,6 +69,7 @@
         <i data-lucide="crosshair" class="w-6 h-6"></i>
     </button>
 
+    <!-- Main Map Container -->
     <div id="map" class="flex-1 w-full bg-slate-200 cursor-crosshair"></div>
 
     <div class="absolute bottom-0 w-full z-[1000] bg-white rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-8 transition-transform duration-300">
@@ -123,7 +123,7 @@
         </div>
     </div>
 
-    <div id="alarmOverlay" class="hidden absolute inset-0 z-[9999] bg-red-600 animate-[pulse_0.5s_ease-in-out_infinite] flex flex-col items-center justify-center p-6 text-white text-center">
+    <div id="alarmOverlay" class="hidden absolute inset-0 z-[9999] bg-red-600 animate-[pulse_0.5s_ease-in-out_infinite] flex-col items-center justify-center p-6 text-white text-center">
         <i data-lucide="bell-ring" class="w-32 h-32 mb-6 animate-bounce"></i>
         <h1 class="text-5xl font-black mb-4 uppercase tracking-tighter">Wake Up!</h1>
         <p class="text-xl font-medium mb-12 opacity-90">You have reached the alarm zone.</p>
@@ -133,35 +133,31 @@
     </div>
 
     <script>
-        // Initialize Lucide icons
         lucide.createIcons();
 
-        // Constants & State
-        const START_LOC = { lat: 6.9271, lng: 79.8612 }; // Default Colombo Fort
+        const START_LOC = { lat: 6.9271, lng: 79.8612 }; // Default: Colombo
         let state = {
             currentLoc: { ...START_LOC },
             targetLoc: null,
             alarmLoc: null,
-            mode: 'distance', // 'distance' or 'manual'
-            selectionMode: null, // 'target' or 'alarm'
+            mode: 'distance', 
+            selectionMode: null, 
             alarmDistance: 1000,
             alarmType: 'both', // 'both', 'sound', 'vibrate'
-            routeCoords: [], // Will hold real map route coordinates
+            routeCoords: [], 
             isSimulating: false,
             isTracking: false,
             isAlarmRinging: false,
-            hasAlarmTriggered: false, // Prevents alarm from ringing continuously while inside the zone
+            hasAlarmTriggered: false, 
             watchId: null
         };
 
         let map, currentMarker, targetMarker, alarmMarker, geofenceCircle, routeLine;
         let simInterval;
+        let activePollingInterval = null; // Layer 3 polling
         
-        // Audio Context for Alarm
         let audioCtx;
         let alarmInterval;
-
-        // Wake Lock & Notification Variables
         let wakeLock = null;
         let hasNotificationPermission = false;
 
@@ -169,46 +165,49 @@
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    wakeLock.addEventListener('release', () => {
-                        console.log('Screen Wake Lock released');
-                    });
-                    console.log('Screen Wake Lock acquired - Screen will not sleep');
+                    wakeLock.addEventListener('release', () => console.log('Wake Lock released'));
                 }
             } catch (err) {
-                console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+                console.error(`Wake Lock Error: ${err.message}`);
             }
         }
 
         function releaseWakeLock() {
             if (wakeLock !== null) {
-                wakeLock.release()
-                    .then(() => { wakeLock = null; });
+                wakeLock.release().then(() => { wakeLock = null; });
             }
         }
 
-        // Re-acquire wake lock if user switches back to the tab
         document.addEventListener('visibilitychange', async () => {
             if (wakeLock !== null && document.visibilityState === 'visible') {
                 requestWakeLock();
             }
         });
 
+        function initAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
         function initMap() {
-            map = L.map('map', { zoomControl: false }).setView([state.currentLoc.lat, state.currentLoc.lng], 13);
+            map = L.map('map', { zoomControl: false, tap: false }).setView([state.currentLoc.lat, state.currentLoc.lng], 13);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap'
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 19
             }).addTo(map);
 
-            // Custom Icon Creators
             const createIcon = (className) => L.divIcon({
                 className: `custom-marker ${className}`,
                 iconSize: [24, 24],
                 iconAnchor: [12, 12]
             });
 
-            currentMarker = L.marker([state.currentLoc.lat, state.currentLoc.lng], { icon: createIcon('marker-current') }).addTo(map);
+            currentMarker = L.marker([state.currentLoc.lat, state.currentLoc.lng], { icon: createIcon('marker-current'), zIndexOffset: 1000 }).addTo(map);
 
-            // Map Click Event
             map.on('click', function(e) {
                 if (state.selectionMode === 'alarm' && state.mode === 'manual') {
                     setAlarmLocation(e.latlng.lat, e.latlng.lng);
@@ -221,7 +220,7 @@
         }
 
         function getDistance(pos1, pos2) {
-            const R = 6371e3; // meters
+            const R = 6371e3; 
             const lat1 = pos1.lat * Math.PI / 180;
             const lat2 = pos2.lat * Math.PI / 180;
             const deltaLat = (pos2.lat - pos1.lat) * Math.PI / 180;
@@ -231,7 +230,7 @@
                       Math.cos(lat1) * Math.cos(lat2) *
                       Math.sin(deltaLng/2) * Math.sin(deltaLng/2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            return R * c;
+            return R * c; // meters
         }
 
         function interpolatePoint(start, end, fraction) {
@@ -241,54 +240,53 @@
             };
         }
 
-        // Feature: Get current user location via GPS
-        function locateUser() {
+        function locateUser(isInitial = false) {
             if (navigator.geolocation) {
-                const toast = document.getElementById('statusToast');
-                const msg = document.getElementById('toastMessage');
-                msg.innerHTML = '<i data-lucide="loader" class="w-4 h-4 mr-2 animate-spin"></i> Finding your location...';
-                toast.classList.remove('hidden');
-                lucide.createIcons();
+                showToast('<i data-lucide="loader" class="w-4 h-4 mr-2 animate-spin"></i> Acquiring GPS Signal...');
                 
                 navigator.geolocation.getCurrentPosition((position) => {
                     state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
                     if(currentMarker) currentMarker.setLatLng([state.currentLoc.lat, state.currentLoc.lng]);
-                    map.setView([state.currentLoc.lat, state.currentLoc.lng], 14);
-                    toast.classList.add('hidden');
-                    if(state.targetLoc) fetchRoute(); // Get new route from current location
+                    
+                    if (isInitial || !state.isTracking) {
+                        map.setView([state.currentLoc.lat, state.currentLoc.lng], 15);
+                    }
+                    hideToast();
+                    if(state.targetLoc) fetchRoute();
                 }, (error) => {
                     console.error("Location error", error);
-                    msg.innerHTML = 'Location access denied or failed.';
-                    setTimeout(() => toast.classList.add('hidden'), 3000);
+                    showToast('Location access denied or poor signal.', true);
                 }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
             }
         }
 
-        // Feature: Fetch actual road route using OSRM Navigation API
         async function fetchRoute() {
             if(!state.targetLoc) return;
-            // Public OSRM API (No keys required)
+            // Real Road Navigation Geometry
             const url = `https://router.project-osrm.org/route/v1/driving/${state.currentLoc.lng},${state.currentLoc.lat};${state.targetLoc.lng},${state.targetLoc.lat}?overview=full&geometries=geojson`;
             try {
                 const res = await fetch(url);
                 const data = await res.json();
                 if(data.routes && data.routes.length > 0) {
-                    state.routeCoords = data.routes[0].geometry.coordinates; // Array of [lng, lat]
+                    state.routeCoords = data.routes[0].geometry.coordinates; 
                     updateMapLayers();
                     if (state.mode === 'distance') calculateDistanceAlarm();
                 }
             } catch(error) {
-                console.error("Failed to fetch road route", error);
+                console.error("OSRM Route fetch failed, falling back to straight line", error);
+                state.routeCoords = [];
+                if (state.mode === 'distance') calculateDistanceAlarm();
             }
         }
 
         function setTargetLocation(lat, lng) {
             state.targetLoc = { lat, lng };
-            document.getElementById('searchInput').value = ""; // clear search if clicked on map
+            document.getElementById('searchInput').value = ""; 
             
-            // Fetch real road route instead of simple straight line
+            // Re-triggering new trip logic
+            state.hasAlarmTriggered = false; 
+            
             fetchRoute();
-            
             updateMapLayers();
             fitBounds();
             updateUI();
@@ -296,6 +294,7 @@
 
         function setAlarmLocation(lat, lng) {
             state.alarmLoc = { lat, lng };
+            state.hasAlarmTriggered = false; // Reset trigger if alarm is moved
             updateMapLayers();
             updateUI();
         }
@@ -304,7 +303,7 @@
             if (!state.targetLoc) return;
             
             if (state.routeCoords && state.routeCoords.length > 0) {
-                // Calculate distance accurately by walking backwards along the real road path
+                // Backtrack along the road path
                 let accumulatedDistance = 0;
                 for (let i = state.routeCoords.length - 1; i > 0; i--) {
                     const p1 = { lat: state.routeCoords[i][1], lng: state.routeCoords[i][0] };
@@ -316,10 +315,9 @@
                         return;
                     }
                 }
-                // If route is shorter than the requested alarm distance
                 setAlarmLocation(state.currentLoc.lat, state.currentLoc.lng);
             } else {
-                // Fallback math (straight line)
+                // Straight line fallback
                 const totalDistance = getDistance(state.currentLoc, state.targetLoc);
                 if (totalDistance <= state.alarmDistance) {
                     setAlarmLocation(state.currentLoc.lat, state.currentLoc.lng);
@@ -334,16 +332,13 @@
         function updateMapLayers() {
             const createIcon = (className) => L.divIcon({ className: `custom-marker ${className}`, iconSize: [24, 24], iconAnchor: [12, 12] });
 
-            // Update Current
             currentMarker.setLatLng([state.currentLoc.lat, state.currentLoc.lng]);
 
-            // Update Target
             if (state.targetLoc) {
                 if (!targetMarker) targetMarker = L.marker([state.targetLoc.lat, state.targetLoc.lng], { icon: createIcon('marker-target') }).addTo(map);
                 else targetMarker.setLatLng([state.targetLoc.lat, state.targetLoc.lng]);
             }
 
-            // Update Alarm & Geofence
             if (state.alarmLoc) {
                 if (!alarmMarker) alarmMarker = L.marker([state.alarmLoc.lat, state.alarmLoc.lng], { icon: createIcon('marker-alarm') }).addTo(map);
                 else alarmMarker.setLatLng([state.alarmLoc.lat, state.alarmLoc.lng]);
@@ -357,11 +352,9 @@
                 }
             }
 
-            // Update Route Line (Draw actual road path)
             if (state.targetLoc) {
                 let latlngs = [];
                 if (state.routeCoords && state.routeCoords.length > 0) {
-                    // Map real road coordinates
                     latlngs = state.routeCoords.map(coord => [coord[1], coord[0]]);
                 } else {
                     latlngs = [[state.currentLoc.lat, state.currentLoc.lng], [state.targetLoc.lat, state.targetLoc.lng]];
@@ -373,9 +366,9 @@
         }
 
         function fitBounds() {
-            if (state.targetLoc) {
+            if (state.targetLoc && state.currentLoc) {
                 const bounds = L.latLngBounds([state.currentLoc, state.targetLoc]);
-                map.fitBounds(bounds, { padding: [50, 150] }); // padding bottom for UI
+                map.fitBounds(bounds, { padding: [50, 200] }); 
             }
         }
 
@@ -388,9 +381,8 @@
             clearTimeout(searchTimeout);
             const query = e.target.value;
             
-            if (query.length > 0) {
-                clearSearch.classList.remove('hidden');
-            } else {
+            if (query.length > 0) clearSearch.classList.remove('hidden');
+            else {
                 clearSearch.classList.add('hidden');
                 searchResults.classList.add('hidden');
             }
@@ -399,18 +391,12 @@
 
             searchTimeout = setTimeout(async () => {
                 try {
-                    // Using Nominatim OSM API restricted to Sri Lanka (Added email to avoid access blocked)
-                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=lk&limit=5&email=test@transitwake.com`, {
-                        headers: {
-                            'Accept': 'application/json',
-                            'Accept-Language': 'en-US,en'
-                        }
+                    // Include email to comply with Nominatim AUP
+                    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=lk&limit=5&email=contact@transitwake.site`, {
+                        headers: { 'Accept': 'application/json', 'Accept-Language': 'en-US,en' }
                     });
                     
-                    if (!res.ok) {
-                        throw new Error("Access Blocked by Map API");
-                    }
-
+                    if (!res.ok) throw new Error("Search API blocked");
                     const data = await res.json();
                     
                     searchResults.innerHTML = '';
@@ -423,7 +409,7 @@
                                 setTargetLocation(parseFloat(item.lat), parseFloat(item.lon));
                                 searchInput.value = item.display_name.split(',')[0];
                                 searchResults.classList.add('hidden');
-                                lucide.createIcons(); // refresh icons inside dynamic html
+                                lucide.createIcons();
                             };
                             searchResults.appendChild(li);
                         });
@@ -433,9 +419,9 @@
                         searchResults.classList.add('hidden');
                     }
                 } catch (error) {
-                    console.error("Search failed", error);
+                    console.error("Search engine failed", error);
                 }
-            }, 500); // 500ms debounce
+            }, 500); 
         });
 
         clearSearch.addEventListener('click', () => {
@@ -444,7 +430,6 @@
             clearSearch.classList.add('hidden');
         });
 
-        // Hide search on click outside
         document.addEventListener('click', (e) => {
             if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
                 searchResults.classList.add('hidden');
@@ -452,83 +437,101 @@
         });
 
         function checkGeofence() {
-            if (!state.alarmLoc) return;
+            if (!state.alarmLoc || state.hasAlarmTriggered) return;
             const dist = getDistance(state.currentLoc, state.alarmLoc);
-            if (dist <= 200 && !state.isAlarmRinging && !state.hasAlarmTriggered) {
+            // 200 meter geofence radius
+            if (dist <= 200 && !state.isAlarmRinging) {
                 triggerAlarm();
             }
         }
 
         function toggleRealTracking() {
+            initAudioContext(); // Initialize immediately on user action
             const bgAudio = document.getElementById('bgAudio');
             
             if (state.isTracking) {
-                // Stop Live Tracking
+                // STOP TRACKING
                 state.isTracking = false;
                 if (state.watchId !== null) {
                     navigator.geolocation.clearWatch(state.watchId);
                     state.watchId = null;
                 }
-                bgAudio.pause(); // Stop background audio
-                releaseWakeLock(); // Release screen lock
-                const toast = document.getElementById('statusToast');
-                toast.classList.add('hidden');
+                if (activePollingInterval !== null) {
+                    clearInterval(activePollingInterval); // Kill Layer 3
+                    activePollingInterval = null;
+                }
+                bgAudio.pause(); // Kill Layer 1 & 2
+                releaseWakeLock(); // Release WakeLock
+                hideToast();
             } else {
-                // Start Live Tracking
+                // START TRACKING
                 if (!state.targetLoc || !state.alarmLoc) return;
+                
                 state.isTracking = true;
-                state.hasAlarmTriggered = false; // Reset trigger for new trip
+                state.hasAlarmTriggered = false; 
                 
-                // Keep screen awake & play silent audio
                 requestWakeLock();
-                bgAudio.play().catch(e => console.log("Audio block: Tap screen first", e));
                 
-                const toast = document.getElementById('statusToast');
-                const msg = document.getElementById('toastMessage');
-                msg.innerHTML = '<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Live GPS Tracking Active (Screen Lock ON)...';
-                toast.classList.remove('hidden');
-                lucide.createIcons();
+                // Layer 1 & 2: Sub-audible Engine
+                bgAudio.volume = 0.01; 
+                bgAudio.play().catch(e => {
+                    console.warn("Audio Context blocked. User must interact.", e);
+                    showToast("Please tap the screen anywhere, then try again.", true);
+                    state.isTracking = false;
+                    return;
+                });
+                
+                showToast('<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Ultra-Tracking Active (Background ON)...');
 
+                // Main GPS Hardware Stream
                 state.watchId = navigator.geolocation.watchPosition(
                     (position) => {
                         state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
                         updateMapLayers();
-                        checkGeofence(); // Check alarm every time we move!
-                        
-                        // Keep map centered on user while tracking
+                        checkGeofence(); 
                         map.panTo([state.currentLoc.lat, state.currentLoc.lng], {animate: true, duration: 1});
                     },
-                    (error) => {
-                        console.error("GPS Watch Error:", error);
-                        msg.innerHTML = 'GPS signal lost. Please check location settings.';
-                        setTimeout(() => toast.classList.add('hidden'), 4000);
-                    },
-                    { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+                    (error) => { console.warn("GPS Stream interrupted:", error); },
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 8000 }
                 );
+
+                // Layer 3: Active Backup Polling
+                // Forces browser to execute JS and request GPS even when suspended
+                activePollingInterval = setInterval(() => {
+                    if (state.isTracking && navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(
+                            (position) => {
+                                state.currentLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
+                                updateMapLayers();
+                                checkGeofence();
+                                // Do not pan map in background polling to save CPU
+                            },
+                            () => {}, // Ignore polling errors silently
+                            { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+                        );
+                    }
+                }, 10000); // Pulse every 10s
             }
             updateUI();
         }
 
         function toggleSimulation() {
             if (state.isSimulating) {
-                // Stop Sim
                 state.isSimulating = false;
                 clearInterval(simInterval);
-                locateUser(); // Reset to user's real location when stopping sim
+                locateUser(); 
                 fitBounds();
             } else {
-                // Start Sim
                 if (!state.targetLoc || !state.alarmLoc) return;
                 state.isSimulating = true;
-                state.hasAlarmTriggered = false; // Reset trigger for new trip
+                state.hasAlarmTriggered = false; 
                 
                 if (state.routeCoords && state.routeCoords.length > 0) {
-                    // Simulate movement exactly along the road nodes!
                     let step = 0;
                     state.currentLoc = { lat: state.routeCoords[0][1], lng: state.routeCoords[0][0] };
                     
                     simInterval = setInterval(() => {
-                        step += 2; // Move 2 nodes at a time for speed
+                        step += 2; 
                         if (step >= state.routeCoords.length - 1) {
                             clearInterval(simInterval);
                             state.isSimulating = false;
@@ -539,12 +542,9 @@
                         state.currentLoc = { lat: nextPt[1], lng: nextPt[0] };
                         updateMapLayers();
                         checkGeofence();
-                        
-                        // Make map follow the bus
                         map.panTo([state.currentLoc.lat, state.currentLoc.lng], {animate: true, duration: 0.4});
                     }, 400);
                 } else {
-                    // Fallback simulation (straight line)
                     state.currentLoc = { ...START_LOC };
                     simInterval = setInterval(() => {
                         const dist = getDistance(state.currentLoc, state.targetLoc);
@@ -565,60 +565,71 @@
         }
 
         function triggerAlarm() {
-            state.isAlarmRinging = true;
-            state.hasAlarmTriggered = true; // Lock alarm so it doesn't fire again for this trip
-            document.getElementById('alarmOverlay').classList.remove('hidden');
-            document.getElementById('alarmOverlay').classList.add('flex');
+            if (state.hasAlarmTriggered) return;
             
-            // Push System Notification (If user is in another app)
+            state.isAlarmRinging = true;
+            state.hasAlarmTriggered = true; 
+            
+            const overlay = document.getElementById('alarmOverlay');
+            overlay.classList.remove('hidden');
+            overlay.classList.add('flex');
+            
+            // Push OS Level Notification
             if (hasNotificationPermission) {
                 new Notification("TransitWake Alarm!", {
-                    body: "Wake Up! You are approaching your destination.",
+                    body: "Wake Up! You are arriving at your destination.",
                     icon: "https://cdn-icons-png.flaticon.com/512/3203/3203071.png",
-                    vibrate: [500, 500, 500, 500, 500]
+                    requireInteraction: true,
+                    vibrate: [500, 250, 500, 250, 500, 250, 500, 250, 500, 250]
                 });
             }
 
-            // Sound Alarm
+            // Web Audio API Synthesis
             if (state.alarmType === 'both' || state.alarmType === 'sound') {
-                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                if (audioCtx.state === 'suspended') audioCtx.resume();
-
+                initAudioContext();
                 alarmInterval = setInterval(() => {
                     const osc = audioCtx.createOscillator();
                     const gain = audioCtx.createGain();
-                    osc.type = 'square';
+                    osc.type = 'square'; // Harsh, attention-grabbing waveform
                     osc.frequency.setValueAtTime(880, audioCtx.currentTime); 
                     osc.connect(gain);
                     gain.connect(audioCtx.destination);
                     osc.start();
                     gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.3);
                     osc.stop(audioCtx.currentTime + 0.3);
-                }, 500);
+                }, 400);
             }
 
-            // Vibrate Pattern Alarm (supported primarily on mobile Android)
+            // Haptic Feedback
             if ((state.alarmType === 'both' || state.alarmType === 'vibrate') && navigator.vibrate) {
-                navigator.vibrate([500, 500, 500, 500, 500, 500, 500, 500]);
+                navigator.vibrate([500, 250, 500, 250, 500, 250, 500, 250]);
+                // Set interval to keep vibrating if browser allows
+                if(!alarmInterval) {
+                     alarmInterval = setInterval(() => {
+                         navigator.vibrate([500, 250, 500, 250]);
+                     }, 1500);
+                }
             }
         }
 
         function stopAlarm() {
             state.isAlarmRinging = false;
-            document.getElementById('alarmOverlay').classList.add('hidden');
-            document.getElementById('alarmOverlay').classList.remove('flex');
-            clearInterval(alarmInterval);
+            const overlay = document.getElementById('alarmOverlay');
+            overlay.classList.add('hidden');
+            overlay.classList.remove('flex');
+            
+            if(alarmInterval) {
+                clearInterval(alarmInterval);
+                alarmInterval = null;
+            }
             if (navigator.vibrate) navigator.vibrate(0);
             
-            // REMOVED: Stopping simulation and tracking here.
-            // Now the bus/user will continue to be tracked until they reach the target!
-            
+            // Note: Tracking continuous to run towards target. hasAlarmTriggered is kept TRUE
             updateUI();
         }
 
         document.getElementById('btnStopAlarm').addEventListener('click', stopAlarm);
 
-        // UI Handlers for Alarm Type
         const btnTypeBoth = document.getElementById('btnTypeBoth');
         const btnTypeSound = document.getElementById('btnTypeSound');
         const btnTypeVib = document.getElementById('btnTypeVib');
@@ -633,8 +644,7 @@
         btnTypeSound.addEventListener('click', () => setAlarmType('sound'));
         btnTypeVib.addEventListener('click', () => setAlarmType('vibrate'));
 
-        // Handler for Location Button
-        document.getElementById('btnLocate').addEventListener('click', locateUser);
+        document.getElementById('btnLocate').addEventListener('click', () => locateUser(false));
 
         const btnDistMode = document.getElementById('btnDistanceMode');
         const btnManMode = document.getElementById('btnManualMode');
@@ -682,11 +692,20 @@
         });
 
         btnSimulate.addEventListener('click', toggleSimulation);
-        
         btnTrack.addEventListener('click', toggleRealTracking);
 
+        function showToast(htmlMsg, autoHide = false) {
+            statusToast.classList.remove('hidden');
+            toastMessage.innerHTML = htmlMsg;
+            lucide.createIcons();
+            if(autoHide) setTimeout(hideToast, 4000);
+        }
+
+        function hideToast() {
+            statusToast.classList.add('hidden');
+        }
+
         function updateUI() {
-            // Button States
             const canStart = state.targetLoc && state.alarmLoc;
             btnSimulate.disabled = !canStart || state.isTracking;
             btnTrack.disabled = !canStart || state.isSimulating;
@@ -702,7 +721,7 @@
             }
 
             if (state.isTracking) {
-                document.getElementById('trackBtnText').innerText = "Tracking Active";
+                document.getElementById('trackBtnText').innerText = "Stop Tracking";
                 btnTrack.classList.replace('bg-indigo-600', 'bg-red-500');
                 btnTrack.classList.replace('shadow-indigo-600/30', 'shadow-red-500/30');
                 document.getElementById('trackIcon').classList.add('animate-pulse');
@@ -713,7 +732,6 @@
                 document.getElementById('trackIcon').classList.remove('animate-pulse');
             }
 
-            // Manual Mode Btn State
             const manualBtn = document.getElementById('btnSetManualAlarm');
             if (state.selectionMode === 'alarm') {
                 manualBtn.classList.add('border-blue-500', 'bg-blue-50', 'text-blue-700');
@@ -723,33 +741,38 @@
                 document.getElementById('manualBtnText').innerText = state.alarmLoc ? "Change Alarm Spot" : "Tap map to set Alarm Spot";
             }
 
-            // Toast State
-            if (!state.targetLoc && !state.selectionMode) {
-                statusToast.classList.remove('hidden');
-                toastMessage.innerHTML = '<i data-lucide="search" class="w-4 h-4 mr-2"></i> Search or tap map to set Target';
+            // Manage Toast Guidance
+            if (!state.targetLoc && !state.selectionMode && !state.isTracking && !state.isSimulating) {
+                showToast('<i data-lucide="search" class="w-4 h-4 mr-2"></i> Search or tap map to set Target');
                 toastMessage.className = "bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-bounce";
             } else if (state.selectionMode === 'alarm') {
-                statusToast.classList.remove('hidden');
-                toastMessage.innerHTML = '<i data-lucide="map-pin" class="w-4 h-4 mr-2"></i> Tap anywhere on map to drop Alarm Pin';
+                showToast('<i data-lucide="map-pin" class="w-4 h-4 mr-2"></i> Tap anywhere on map to drop Alarm Pin');
                 toastMessage.className = "bg-blue-600 text-white text-sm px-4 py-2 rounded-full shadow-lg inline-flex items-center animate-pulse";
-            } else {
-                statusToast.classList.add('hidden');
+            } else if (!state.isTracking && !state.isSimulating) {
+                hideToast();
             }
-            lucide.createIcons();
         }
 
-        // Initialize on load
         window.onload = () => {
             initMap();
             updateUI();
-            locateUser(); // Ask permission & set actual location automatically
+            locateUser(true); 
             
-            // Request Notification Permission on load
+            // Proactive permission handling
             if ("Notification" in window) {
                 Notification.requestPermission().then(permission => {
                     hasNotificationPermission = permission === "granted";
                 });
             }
+            
+            // Unlock audio context cleanly on first document interaction
+            const unlockAudio = () => {
+                initAudioContext();
+                document.removeEventListener('click', unlockAudio);
+                document.removeEventListener('touchstart', unlockAudio);
+            };
+            document.addEventListener('click', unlockAudio);
+            document.addEventListener('touchstart', unlockAudio);
         };
 
     </script>
