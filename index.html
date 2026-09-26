@@ -164,6 +164,34 @@
         // Wake Lock & Notification Variables
         let wakeLock = null;
         let hasNotificationPermission = false;
+        
+        // Background Keep-Alive Audio Variables
+        let bgAudioCtx = null;
+        let bgOscillator = null;
+
+        function startBackgroundKeepAlive() {
+            // Create a silent audio track that runs infinitely
+            if (!bgAudioCtx) bgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (bgAudioCtx.state === 'suspended') bgAudioCtx.resume();
+            
+            bgOscillator = bgAudioCtx.createOscillator();
+            const gainNode = bgAudioCtx.createGain();
+            gainNode.gain.value = 0; // 0 volume = completely silent
+            
+            bgOscillator.connect(gainNode);
+            gainNode.connect(bgAudioCtx.destination);
+            bgOscillator.start();
+            console.log("Background Keep-Alive Audio Started");
+        }
+
+        function stopBackgroundKeepAlive() {
+            if (bgOscillator) {
+                bgOscillator.stop();
+                bgOscillator.disconnect();
+                bgOscillator = null;
+            }
+            console.log("Background Keep-Alive Audio Stopped");
+        }
 
         async function requestWakeLock() {
             try {
@@ -460,8 +488,6 @@
         }
 
         function toggleRealTracking() {
-            const bgAudio = document.getElementById('bgAudio');
-            
             if (state.isTracking) {
                 // Stop Live Tracking
                 state.isTracking = false;
@@ -469,7 +495,7 @@
                     navigator.geolocation.clearWatch(state.watchId);
                     state.watchId = null;
                 }
-                bgAudio.pause(); // Stop background audio
+                stopBackgroundKeepAlive(); // Stop the silent audio hack
                 releaseWakeLock(); // Release screen lock
                 const toast = document.getElementById('statusToast');
                 toast.classList.add('hidden');
@@ -479,13 +505,13 @@
                 state.isTracking = true;
                 state.hasAlarmTriggered = false; // Reset trigger for new trip
                 
-                // Keep screen awake & play silent audio
+                // Keep screen awake & start silent audio hack to bypass background limits
                 requestWakeLock();
-                bgAudio.play().catch(e => console.log("Audio block: Tap screen first", e));
+                startBackgroundKeepAlive();
                 
                 const toast = document.getElementById('statusToast');
                 const msg = document.getElementById('toastMessage');
-                msg.innerHTML = '<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Live GPS Tracking Active (Screen Lock ON)...';
+                msg.innerHTML = '<i data-lucide="navigation" class="w-4 h-4 mr-2 animate-pulse"></i> Live Tracking Active (Background Mode ON)...';
                 toast.classList.remove('hidden');
                 lucide.createIcons();
 
@@ -503,7 +529,7 @@
                         msg.innerHTML = 'GPS signal lost. Please check location settings.';
                         setTimeout(() => toast.classList.add('hidden'), 4000);
                     },
-                    { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 } // Reduced timeout to force faster updates
                 );
             }
             updateUI();
